@@ -59,16 +59,30 @@ export function getMachineId(): string {
 	return cachedMachineId;
 }
 
+function getBoatHostIdentity(): string | null {
+	if (platform() !== "linux") return null;
+	let contents: string;
+	try {
+		contents = readFileSync("/run/ascii-secrets/env.sh", "utf8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+		throw error;
+	}
+	const boatId = contents.match(/^export BOAT_ID="(bx_[a-zA-Z0-9]+)"$/m)?.[1];
+	if (!boatId) throw new Error("Boat runtime is missing a valid BOAT_ID");
+	return "boat:" + boatId;
+}
+
 let cachedHashedId: string | null = null;
 
 /**
  * Stable host id safe for cloud transmission.
- * HMAC of the raw machine id; non-reversible and app-specific.
+ * HMAC of the Boat box ID or raw machine ID; non-reversible and app-specific.
  * This is the canonical identifier for a machine acting as a host or client.
  */
 export function getHostId(): string {
 	if (!cachedHashedId) {
-		const machineId = getMachineId();
+		const machineId = getBoatHostIdentity() ?? getMachineId();
 		cachedHashedId = createHmac("sha256", APP_HOST_SALT)
 			.update(machineId)
 			.digest("hex")

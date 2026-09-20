@@ -385,3 +385,17 @@ shared memory there.
 
 **What we did:** `start.sh` remounts `/dev/shm` at 50% of RAM at boot, after
 which four windows open without a crash.
+
+## Boat external hosts (local trial)
+
+Boat preserves the logical box and filesystem across stop/resume but replaces
+/etc/machine-id. Using that ID for the external Superset host leaves existing
+terminal tabs targeting an offline host. This trial derives only getHostId()
+from the box's BOAT_ID in /run/ascii-secrets/env.sh. The runtime file is used
+instead of inherited environment or a saved identity so CLI and systemd agree,
+and a newly forked box receives its own identity. Linux machine identity and
+getMachineId() encryption behavior are unchanged. Other platforms retain the
+upstream host-ID calculation. A missing runtime file means this is not Boat;
+a present but unreadable or invalid runtime file fails rather than silently
+registering another host. This does not preserve running processes or establish
+that the UI restores agent conversations after a cold boot.
