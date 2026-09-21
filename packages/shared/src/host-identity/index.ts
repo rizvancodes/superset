@@ -8,7 +8,9 @@ export function resolveHostIdentity(
 ): string {
 	if (configuredIdentity !== undefined) {
 		if (!/^[a-zA-Z0-9][a-zA-Z0-9:._/-]{0,255}$/.test(configuredIdentity)) {
-			throw new Error("SUPERSET_HOST_IDENTITY must be a nonempty scoped identity (maximum 256 characters)");
+			throw new Error(
+				"SUPERSET_HOST_IDENTITY must be a nonempty scoped identity (maximum 256 characters)",
+			);
 		}
 		return configuredIdentity;
 	}

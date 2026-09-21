@@ -85,6 +85,17 @@ jobs:
           DIST="$(pwd)/packages/cli/dist/superset-${{ matrix.target }}"
           bash packages/cli/scripts/smoke-test.sh "$DIST" "${{ matrix.target }}"
 
+      - name: Verify pinned updater guard
+        if: inputs.cli-channel == 'brainjam-pinned'
+        run: |
+          set -euo pipefail
+          CLI="$(pwd)/packages/cli/dist/superset-${{ matrix.target }}/bin/superset"
+          if "$CLI" update --check > update-check.log 2>&1; then
+            echo "Pinned build unexpectedly permitted self-update"
+            exit 1
+          fi
+          grep -q 'pinned Brainjam build' update-check.log
+
       # Linux only: the E2E simulates a systemd launch (stat -c, stripped env)
       # and wipes the runner $HOME's agent configs — fine on an ephemeral
       # runner, which is why SUPERSET_HEADLESS_E2E must be set explicitly.
