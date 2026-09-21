@@ -22,3 +22,11 @@ publishes the matching archive, checksums and source commit metadata. Do not mov
 published tags or replace their assets. Update the dotfiles release and SHA256
 pin only after verifying the new release. Keep fork packaging commits separate
 from the identity change when preparing an upstream PR.
+
+Optional standalone agent recovery: set `SUPERSET_RESUME_AGENTS_ON_START=1` in the
+service launcher. On startup, missing terminals for previously open agents resume
+with their saved conversation IDs; surviving terminals are adopted unchanged.
+Explicitly closed sessions and old ended history stay closed. It does not preserve
+running tasks mid-tool-call or restore plain shell processes. Desktop and mobile
+clients can discover the restored live terminals without a client build change.
+Mobile display still needs verification against the installed beta.

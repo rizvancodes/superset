@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { resolve } from "node:path";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import type { HostDb } from "../../../db";
@@ -21,10 +22,12 @@ import {
 } from "../../../terminal-agents/persistence";
 import type { AgentRunResult } from "../agents/agents";
 import {
+	captureStartupResumeCandidates,
 	findResumedSuccessor,
 	listAccountRestartCandidates,
 	type ResumeSessionDeps,
 	restartAccountSessions,
+	resumeStartupAgentSessions,
 	resumeTerminalAgentSession,
 } from "./terminal-agents";
 
@@ -621,5 +624,112 @@ describe("restartAccountSessions", () => {
 		expect(disposedTerminals).toEqual(["t1"]);
 		expect(broadcasts).toEqual([]);
 		expect(findResumeCandidateBinding(db, "ws-1", "t1")).toBeDefined();
+	});
+});
+
+describe("standalone startup recovery", () => {
+	function setup() {
+		const db = createTestDb();
+		seedResumableBinding(db);
+		db.update(terminalSessions)
+			.set({ status: "active", createdAt: Date.now() })
+			.run();
+		db.update(terminalAgentBindings)
+			.set({ endedAt: null, endReason: null })
+			.run();
+		return { db, ...createDeps(db) };
+	}
+
+	it("restores a lost agent with the same conversation, even immediately after launch", async () => {
+		const { db, deps, runCalls } = setup();
+		const candidates = captureStartupResumeCandidates(db);
+		const result = await resumeStartupAgentSessions(
+			deps,
+			candidates,
+			async () => new Set(),
+		);
+		expect(result.resumedTerminalIds).toEqual(["t-new"]);
+		expect(runCalls[0]?.resumeSessionId).toBe("sess-t1");
+		expect(findResumedSuccessorTerminalId(db, "ws-1", "t1")).toBe("t-new");
+		await resumeStartupAgentSessions(deps, candidates, async () => new Set());
+		expect(runCalls).toHaveLength(1);
+	});
+
+	it("adopts surviving terminals without launching duplicates", async () => {
+		const { db, deps, runCalls } = setup();
+		await resumeStartupAgentSessions(
+			deps,
+			captureStartupResumeCandidates(db),
+			async () => new Set(["t1"]),
+		);
+		expect(runCalls).toHaveLength(0);
+		expect(captureStartupResumeCandidates(db)).toHaveLength(1);
+	});
+
+	it("fails closed when the daemon cannot answer", async () => {
+		const { db, deps, runCalls } = setup();
+		await expect(
+			resumeStartupAgentSessions(
+				deps,
+				captureStartupResumeCandidates(db),
+				async () => {
+					throw new Error("daemon unavailable");
+				},
+			),
+		).rejects.toThrow("daemon unavailable");
+		expect(runCalls).toHaveLength(0);
+		expect(captureStartupResumeCandidates(db)).toHaveLength(1);
+	});
+
+	it("does not revive historical exits or pending deliberate closes", () => {
+		const { db } = setup();
+		db.update(terminalSessions).set({ disposeRequestedAt: Date.now() }).run();
+		expect(captureStartupResumeCandidates(db)).toHaveLength(0);
+		db.update(terminalSessions)
+			.set({ disposeRequestedAt: null, status: "exited" })
+			.run();
+		expect(captureStartupResumeCandidates(db)).toHaveLength(0);
+		db.update(terminalSessions).set({ status: "active" }).run();
+		db.update(terminalAgentBindings)
+			.set({ endedAt: Date.now(), endReason: "detached" })
+			.run();
+		expect(captureStartupResumeCandidates(db)).toHaveLength(0);
+	});
+
+	it("honors a close that arrives while daemon readiness is pending", async () => {
+		const { db, deps, runCalls } = setup();
+		await resumeStartupAgentSessions(
+			deps,
+			captureStartupResumeCandidates(db),
+			async () => {
+				db.update(terminalSessions)
+					.set({ disposeRequestedAt: Date.now() })
+					.run();
+				return new Set();
+			},
+		);
+		expect(runCalls).toHaveLength(0);
+	});
+
+	it("handles a reaper racing startup without losing the saved conversation", async () => {
+		const { db, deps, runCalls } = setup();
+		const candidates = captureStartupResumeCandidates(db);
+		db.update(terminalSessions)
+			.set({ status: "exited" })
+			.where(eq(terminalSessions.id, "t1"))
+			.run();
+		deps.terminalAgentStore.markTerminalExited("t1");
+		await resumeStartupAgentSessions(deps, candidates, async () => new Set());
+		expect(runCalls[0]?.resumeSessionId).toBe("sess-t1");
+	});
+
+	it("coalesces simultaneous startup recovery calls", async () => {
+		const { db, deps, runCalls } = setup();
+		const candidates = captureStartupResumeCandidates(db);
+		await Promise.all([
+			resumeStartupAgentSessions(deps, candidates, async () => new Set()),
+			resumeStartupAgentSessions(deps, candidates, async () => new Set()),
+		]);
+		expect(runCalls).toHaveLength(1);
 	});
 });

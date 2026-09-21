@@ -388,7 +388,7 @@ which four windows open without a crash.
 
 ## External hosts on replaceable VMs
 
-Boat preserves the logical box and filesystem across stop/resume but replaces
+Boat preserves the logical box and filesystem across stop/resume but can replace
 `/etc/machine-id`. OS-derived Superset IDs leave existing tabs addressing an
 offline host. A shared identity resolver now accepts an explicit provisioning
 identity, then checks provider adapters, then retains the existing OS-derived
@@ -401,3 +401,13 @@ but unreadable or invalid runtime fails instead of silently registering another
 host. Host hashing and the raw `getMachineId()` encryption helper are unchanged.
 This stabilizes routing; it does not preserve processes or guarantee every agent
 can resume. The CLI and host service must receive the same explicit configuration.
+
+A stable host identity alone does not restore agent processes. Desktop panes can
+request a resume when opened, but mobile lists live terminals and cannot discover
+those dead sessions. External hosts can opt into `SUPERSET_RESUME_AGENTS_ON_START=1`:
+startup snapshots open agents, checks the actual daemon's live terminal list, and
+uses the existing atomic resume path for missing terminals. Unlike a disposable
+managed sandbox, a standalone service restart can adopt surviving PTYs; treating
+its live list as empty would duplicate agents. Recovery is one pass per startup,
+requires a captured agent session ID and supported resume command, and leaves
+already-ended history and deliberately closed sessions alone.

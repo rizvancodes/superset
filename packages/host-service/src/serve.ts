@@ -73,8 +73,16 @@ async function main(): Promise<void> {
 		apiUrl: env.SUPERSET_API_URL,
 	});
 
-	const { app, injectWebSocket, api, db, launchSandboxAgent } = createApp({
+	const {
+		app,
+		injectWebSocket,
+		api,
+		db,
+		launchSandboxAgent,
+		resumeAgentsOnStart,
+	} = createApp({
 		config: {
+			resumeAgentsOnStart: env.SUPERSET_RESUME_AGENTS_ON_START === "1",
 			organizationId: env.ORGANIZATION_ID,
 			dbPath: env.HOST_DB_PATH,
 			cloudApiUrl: env.SUPERSET_API_URL,
@@ -139,6 +147,9 @@ async function main(): Promise<void> {
 		// and event bus are up, and a person opening the workspace sees the
 		// agent's terminal the way they would on their own machine.
 		void launchSandboxAgent();
+		void resumeAgentsOnStart().catch((error) => {
+			console.warn("[terminal-agents] startup recovery aborted", error);
+		});
 
 		if (env.RELAY_URL && env.SUPERSET_HOST_RUN_MODE !== "sandbox") {
 			tunnelPromise = connectRelay({

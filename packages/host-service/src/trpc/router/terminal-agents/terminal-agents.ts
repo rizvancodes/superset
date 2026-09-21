@@ -3,15 +3,20 @@ import {
 	BUILTIN_AGENT_IDS,
 } from "@superset/shared/agent-catalog";
 import { TRPCError } from "@trpc/server";
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { z } from "zod";
 import type { HostDb } from "../../../db";
-import { workspaces } from "../../../db/schema";
+import {
+	terminalAgentBindings,
+	terminalSessions,
+	workspaces,
+} from "../../../db/schema";
 import type { EventBus } from "../../../events";
 import { hasHarnessSession } from "../../../terminal/harness-transcript";
 import {
 	createTerminalSessionInternal,
 	disposeSessionAndWait,
+	isLiveTerminalSession,
 } from "../../../terminal/terminal";
 import type {
 	TerminalAgentBinding,
@@ -27,6 +32,7 @@ import {
 	seedEndedTerminalAgentBinding,
 	unclaimResumeCandidateBinding,
 } from "../../../terminal-agents/persistence";
+import type { HostServiceContext } from "../../../types";
 import { protectedProcedure, router } from "../../index";
 import {
 	type AgentRunResult,
@@ -70,6 +76,90 @@ export interface ResumeSessionDeps {
 	hasSession: (binding: TerminalAgentBinding) => boolean | null;
 	/** Tells panes on the dead terminal where the session went. */
 	eventBus: Pick<EventBus, "broadcastTerminalLifecycle">;
+}
+
+export function resumeSessionDepsFor(
+	ctx: HostServiceContext,
+): ResumeSessionDeps {
+	return {
+		db: ctx.db,
+		terminalAgentStore: ctx.terminalAgentStore,
+		runAgent: (input) => runAgentInWorkspace(ctx, input),
+		disposeSession: (terminalId) => disposeSessionAndWait(terminalId, ctx.db),
+		hasSession: (binding) => bindingHasHarnessSession(ctx.db, binding),
+		eventBus: ctx.eventBus,
+	};
+}
+
+export function captureStartupResumeCandidates(db: HostDb) {
+	return db
+		.select({
+			terminalId: terminalAgentBindings.terminalId,
+			workspaceId: terminalAgentBindings.workspaceId,
+		})
+		.from(terminalAgentBindings)
+		.innerJoin(
+			terminalSessions,
+			eq(terminalAgentBindings.terminalId, terminalSessions.id),
+		)
+		.where(
+			and(
+				isNull(terminalAgentBindings.endedAt),
+				isNotNull(terminalAgentBindings.agentSessionId),
+				eq(terminalSessions.status, "active"),
+				isNull(terminalSessions.disposeRequestedAt),
+				isNotNull(terminalSessions.originWorkspaceId),
+			),
+		)
+		.all();
+}
+
+export async function resumeStartupAgentSessions(
+	deps: ResumeSessionDeps,
+	candidates: ReturnType<typeof captureStartupResumeCandidates>,
+	listAliveTerminalIds: () => Promise<Set<string>>,
+): Promise<{ resumedTerminalIds: string[] }> {
+	const resumedTerminalIds: string[] = [];
+	for (const candidate of candidates) {
+		// Await an authoritative daemon answer; a service restart can adopt live PTYs.
+		const aliveIds = await listAliveTerminalIds();
+		if (
+			aliveIds.has(candidate.terminalId) ||
+			isLiveTerminalSession(candidate.terminalId)
+		)
+			continue;
+		const row = deps.db
+			.select()
+			.from(terminalSessions)
+			.where(eq(terminalSessions.id, candidate.terminalId))
+			.get();
+		const binding = getTerminalAgentBinding(deps.db, candidate.terminalId);
+		if (
+			!row?.originWorkspaceId ||
+			row.disposeRequestedAt != null ||
+			row.status === "disposed"
+		)
+			continue;
+		if (
+			!binding ||
+			(binding.endedAt !== undefined && binding.endReason !== "terminal-exited")
+		)
+			continue;
+		deps.terminalAgentStore.markTerminalExited(candidate.terminalId);
+		try {
+			const result = await resumeTerminalAgentSession(deps, candidate);
+			if (result.resumed) resumedTerminalIds.push(result.terminalId);
+		} catch (error) {
+			console.warn("[terminal-agents] startup resume failed", {
+				terminalId: candidate.terminalId,
+				error,
+			});
+		}
+	}
+	console.log(
+		`[terminal-agents] startup recovery: resumed ${resumedTerminalIds.length} agent(s)`,
+	);
+	return { resumedTerminalIds };
 }
 
 const resumeInflight = new Map<string, Promise<ResumeResult>>();
@@ -424,18 +514,7 @@ export const terminalAgentsRouter = router({
 	resume: protectedProcedure
 		.input(z.object({ workspaceId: z.string(), terminalId: z.string() }))
 		.mutation(({ ctx, input }) =>
-			resumeTerminalAgentSession(
-				{
-					db: ctx.db,
-					terminalAgentStore: ctx.terminalAgentStore,
-					runAgent: (runInput) => runAgentInWorkspace(ctx, runInput),
-					disposeSession: (terminalId) =>
-						disposeSessionAndWait(terminalId, ctx.db),
-					hasSession: (binding) => bindingHasHarnessSession(ctx.db, binding),
-					eventBus: ctx.eventBus,
-				},
-				input,
-			),
+			resumeTerminalAgentSession(resumeSessionDepsFor(ctx), input),
 		),
 
 	/**

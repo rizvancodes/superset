@@ -101,3 +101,12 @@ detection; an empty or malformed value is an error. Without it, the Boat adapter
 reads the runtime box ID, and other machines retain their existing OS-derived
 identity. This is a machine provisioning option, not an API deployment variable;
 it does not belong in deployment secrets or application `.env` templates.
+
+`SUPERSET_RESUME_AGENTS_ON_START=1` enables standalone host startup recovery.
+It defaults to `0` and is supplied by the machine's service launcher, not API
+secrets or shared application templates. The host snapshots open agent bindings
+before accepting requests, waits for the PTY daemon, and resumes only missing
+terminals using their saved provider session IDs. Surviving terminals and explicit
+close requests are skipped. Previously ended conversations are not auto-opened;
+failed launches remain available for the existing manual/desktop resume path.
+This option does not switch the host into managed-sandbox mode or alter auth.

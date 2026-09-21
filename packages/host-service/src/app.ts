@@ -29,6 +29,7 @@ import {
 	readSandboxIdentity,
 	runSandboxSelfSeed,
 } from "./runtime/sandbox-self-seed";
+import { getDaemonClient } from "./terminal/daemon-client-singleton";
 import {
 	isLiveTerminalSession,
 	registerWorkspaceTerminalRoute,
@@ -40,6 +41,11 @@ import {
 } from "./terminal-agents";
 import { appRouter } from "./trpc/router";
 import { gitStatusStore } from "./trpc/router/git/utils/git-status-store";
+import {
+	captureStartupResumeCandidates,
+	resumeSessionDepsFor,
+	resumeStartupAgentSessions,
+} from "./trpc/router/terminal-agents/terminal-agents";
 import { provisionSelectedAccounts } from "./trpc/router/usage/account-provisioning";
 import {
 	execGh as defaultExecGh,
@@ -68,6 +74,7 @@ export interface CreateAppOptions {
 		allowedOrigins: string | string[];
 		/** Loopback surface for driving desktop browser panes; desktop-only. */
 		browserBridge?: BrowserBridgeConfig;
+		resumeAgentsOnStart?: boolean;
 	};
 	providers: {
 		auth: ApiAuthProvider;
@@ -99,6 +106,7 @@ export interface CreateAppResult {
 	 * the first.
 	 */
 	launchSandboxAgent: () => Promise<void>;
+	resumeAgentsOnStart: () => Promise<void>;
 	dispose: () => Promise<void>;
 }
 
@@ -203,6 +211,10 @@ export function createApp(options: CreateAppOptions): CreateAppResult {
 	// EventBus): newly created workspaces get their first branch/upstream sync
 	// + PR link immediately instead of waiting for the 5-min safety net.
 	pullRequestRuntime.subscribeToWorkspaceEvents(eventBus);
+
+	const startupCandidates = config.resumeAgentsOnStart
+		? captureStartupResumeCandidates(db)
+		: [];
 
 	const terminalAgentPersistence = new SqliteTerminalAgentBindingPersistence(
 		db,
@@ -451,6 +463,35 @@ export function createApp(options: CreateAppOptions): CreateAppResult {
 		);
 	};
 
+	const resumeAgentsOnStart = async () => {
+		if (!config.resumeAgentsOnStart) return;
+		await resumeStartupAgentSessions(
+			resumeSessionDepsFor({
+				git,
+				credentials: providers.credentials,
+				github,
+				execGh,
+				api,
+				db,
+				runtime,
+				eventBus,
+				terminalAgentStore,
+				organizationId: config.organizationId,
+				isAuthenticated: true,
+				browserBridge: config.browserBridge,
+			} as HostServiceContext),
+			startupCandidates,
+			async () => {
+				const daemon = await getDaemonClient();
+				return new Set(
+					(await daemon.list())
+						.filter((session) => session.alive)
+						.map((session) => session.id),
+				);
+			},
+		);
+	};
+
 	return {
 		app,
 		injectWebSocket,
@@ -458,6 +499,7 @@ export function createApp(options: CreateAppOptions): CreateAppResult {
 		db,
 		eventBus,
 		launchSandboxAgent,
+		resumeAgentsOnStart,
 		dispose,
 	};
 }

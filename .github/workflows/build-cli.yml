@@ -71,6 +71,9 @@ jobs:
       - name: Verify host identity
         run: bun test packages/shared/src/host-identity
 
+      - name: Verify agent recovery
+        run: bun test packages/host-service/src/trpc/router/terminal-agents/terminal-agents.test.ts packages/host-service/src/terminal-agents/persistence.test.ts packages/host-service/src/terminal/reaper/reaper.test.ts
+
       - name: Build distribution
         working-directory: packages/cli
         env:
