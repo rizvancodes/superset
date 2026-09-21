@@ -122,6 +122,11 @@ export default command({
 		),
 	},
 	run: async ({ options }) => {
+		if (process.env.SUPERSET_CLI_CHANNEL === "brainjam-pinned") {
+			throw new CLIError(
+				"This host uses a pinned Brainjam build. Update it through the dotfiles installer; upstream self-update is disabled.",
+			);
+		}
 		if (isDesktopBundled()) {
 			throw new CLIError(
 				"This CLI is bundled with the Superset desktop app and updates together with the app.",

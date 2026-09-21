@@ -10,6 +10,11 @@ on:
         description: 'JSON array of {os, target} build matrix entries'
         required: true
         type: string
+      cli-channel:
+        description: 'Build-time CLI update channel'
+        required: false
+        type: string
+        default: standalone
       upload:
         description: 'Upload built tarballs as artifacts (release pipeline needs them; PR CI does not)'
         required: false
@@ -63,9 +68,13 @@ jobs:
         if: startsWith(matrix.target, 'darwin-')
         run: bun install --frozen
 
+      - name: Verify host identity
+        run: bun test packages/shared/src/host-identity
+
       - name: Build distribution
         working-directory: packages/cli
         env:
+          SUPERSET_CLI_CHANNEL: ${{ inputs.cli-channel }}
           RELAY_URL: ${{ secrets.RELAY_URL }}
           SUPERSET_API_URL: ${{ secrets.SUPERSET_API_URL }}
           SUPERSET_WEB_URL: ${{ secrets.SUPERSET_WEB_URL }}

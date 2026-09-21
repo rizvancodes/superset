@@ -1,0 +1,47 @@
+name: Release Brainjam CLI
+
+on:
+  push:
+    tags: ['brainjam-cli-v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.repository == 'rizvancodes/superset'
+    uses: ./.github/workflows/build-cli.yml
+    with:
+      targets: '[{"os":"ubuntu-24.04","target":"linux-x64"}]'
+      cli-channel: brainjam-pinned
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: superset-linux-x64
+          path: release-artifacts
+      - name: Write build provenance and checksum
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION=$(jq -r .version packages/cli/package.json)
+          [[ "$RELEASE_TAG" == "brainjam-cli-v${VERSION}-"* ]]
+          jq -n --arg tag "$RELEASE_TAG" --arg commit "$GITHUB_SHA" --arg version "$VERSION" \
+            '{tag:$tag,commit:$commit,upstreamVersion:$version,channel:"brainjam-pinned"}' > release-artifacts/build-info.json
+          cd release-artifacts
+          sha256sum superset-linux-x64.tar.gz build-info.json > SHA256SUMS
+      - name: Publish fork release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" release-artifacts/* \
+            --verify-tag --prerelease --title "Brainjam Superset $RELEASE_TAG" \
+            --notes-file docs/brainjam-release.md
