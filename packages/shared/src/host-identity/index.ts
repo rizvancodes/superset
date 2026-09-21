@@ -1,22 +1,27 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createBoatIdentityProvider } from "./boat";
+import { readIdentity, saveIdentity, validateIdentity } from "./store";
 import type { HostIdentityProvider } from "./types";
 
 export function resolveHostIdentity(
 	machineIdentity: () => string,
 	providers: HostIdentityProvider[] = [createBoatIdentityProvider()],
 	configuredIdentity = process.env.SUPERSET_HOST_IDENTITY,
+	identityPath = join(
+		process.env.SUPERSET_HOME_DIR ?? join(homedir(), ".superset"),
+		"host-identity",
+	),
 ): string {
 	if (configuredIdentity !== undefined) {
-		if (!/^[a-zA-Z0-9][a-zA-Z0-9:._/-]{0,255}$/.test(configuredIdentity)) {
-			throw new Error(
-				"SUPERSET_HOST_IDENTITY must be a nonempty scoped identity (maximum 256 characters)",
-			);
-		}
-		return configuredIdentity;
+		validateIdentity(configuredIdentity);
+		return saveIdentity(identityPath, configuredIdentity);
 	}
+	const saved = readIdentity(identityPath);
+	if (saved !== null) return saved;
 	for (const provider of providers) {
 		const identity = provider.resolve();
-		if (identity !== null) return identity;
+		if (identity !== null) return saveIdentity(identityPath, identity);
 	}
 	return machineIdentity();
 }

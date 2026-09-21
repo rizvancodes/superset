@@ -4,10 +4,24 @@ Experimental Linux x64 CLI and host-service distribution based on upstream
 Superset 1.29.0. Application protocol versions remain 1.29.0; the release tag and
 build-info.json distinguish the fork revision. The official desktop stays unchanged.
 
-Host identity uses a shared resolver: explicit SUPERSET_HOST_IDENTITY, then the
-Boat runtime box ID, then the existing OS machine identity. Only Boat is currently
-auto-detected. Other providers can supply a stable, scoped provisioning identity.
+Host identity is saved in `$SUPERSET_HOME_DIR/host-identity` (default
+`~/.superset/host-identity`). The CLI and host service share this resolver. On first
+use, `SUPERSET_HOST_IDENTITY` or Boat runtime metadata supplies the identity;
+subsequent launches read the saved value without requiring runtime metadata.
+Ordinary machines without a managed identity retain their existing OS identity.
+An explicit identity must match any saved value, otherwise startup fails.
 Encryption key derivation remains unchanged. This does not keep processes alive.
+
+To migrate a host whose Boat metadata is already missing, run the new CLI once
+with its verified existing identity, for example:
+`SUPERSET_HOST_IDENTITY=boat:bx_EXAMPLE superset status`.
+Do not invent a new value for an existing host.
+
+A stop/resume keeps the saved file. When provisioning a cloned VM as a NEW host,
+stop Superset before removing the clone's `~/.superset/host-identity`, then launch
+with the clone's new provider identity. Do not bake this file into a base image.
+The saved value deliberately wins over runtime discovery; clones must be reset
+explicitly. Never reset the original VM during a normal restart.
 
 Builds use the upstream distribution builder and smoke/headless checks. The pinned
 CLI refuses self-update, including requests from the desktop host updater, so an

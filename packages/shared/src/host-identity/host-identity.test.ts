@@ -1,5 +1,8 @@
-import { describe, expect, test } from "bun:test";
-import { resolveHostIdentity } from ".";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { resolveHostIdentity as resolve } from ".";
 import { createBoatIdentityProvider } from "./boat";
 
 const boat = (id: string) =>
@@ -7,6 +10,16 @@ const boat = (id: string) =>
 const missing = () => {
 	throw Object.assign(new Error("missing"), { code: "ENOENT" });
 };
+
+let directory: string;
+let identityPath: string;
+beforeEach(() => {
+	directory = mkdtempSync(join(tmpdir(), "superset-identity-"));
+	identityPath = join(directory, "host-identity");
+});
+afterEach(() => rmSync(directory, { recursive: true, force: true }));
+const resolveHostIdentity = (...args: Parameters<typeof resolve>) =>
+	resolve(args[0], args[1], args[2], args[3] ?? identityPath);
 
 describe("persistent host identity", () => {
 	test("same box survives a replaced Linux machine; a clone gets another identity", () => {
@@ -19,7 +32,12 @@ describe("persistent host identity", () => {
 			resolveHostIdentity(() => "machine-b", [boat("bx_one")], undefined),
 		).toBe(first);
 		expect(
-			resolveHostIdentity(() => "machine-b", [boat("bx_two")], undefined),
+			resolveHostIdentity(
+				() => "machine-b",
+				[boat("bx_two")],
+				undefined,
+				join(directory, "clone-identity"),
+			),
 		).not.toBe(first);
 	});
 	test("preserves the existing identity outside Boat", () => {
@@ -68,4 +86,50 @@ describe("persistent host identity", () => {
 			).toThrow();
 		}
 	});
+});
+
+test("saved identity survives missing metadata across resolver launches", () => {
+	expect(resolveHostIdentity(() => "old-machine", [boat("bx_one")])).toBe(
+		"boat:bx_one",
+	);
+	const broken = createBoatIdentityProvider(
+		"linux",
+		() => "export PRODUCT_MODE=agent\n",
+	);
+	expect(resolveHostIdentity(() => "new-machine", [broken])).toBe(
+		"boat:bx_one",
+	);
+	expect(
+		resolveHostIdentity(
+			() => "new-machine",
+			[createBoatIdentityProvider("linux", missing)],
+		),
+	).toBe("boat:bx_one");
+	expect(statSync(identityPath).mode & 0o777).toBe(0o600);
+});
+
+test("explicit identity seeds an existing host when metadata is missing", () => {
+	resolveHostIdentity(() => "machine", [], "boat:bx_one");
+	expect(resolveHostIdentity(() => "other-machine", [])).toBe("boat:bx_one");
+	expect(() => resolveHostIdentity(() => "machine", [], "boat:bx_two")).toThrow(
+		"conflicts",
+	);
+});
+
+test("cloned state requires an explicit identity reset", () => {
+	resolveHostIdentity(() => "machine", [boat("bx_one")]);
+	expect(resolveHostIdentity(() => "machine", [boat("bx_two")])).toBe(
+		"boat:bx_one",
+	);
+	rmSync(identityPath);
+	expect(resolveHostIdentity(() => "machine", [boat("bx_two")])).toBe(
+		"boat:bx_two",
+	);
+});
+
+test("invalid saved state never silently switches the host", () => {
+	writeFileSync(identityPath, "");
+	expect(() =>
+		resolveHostIdentity(() => "fallback", [boat("bx_one")]),
+	).toThrow();
 });
