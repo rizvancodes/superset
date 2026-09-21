@@ -386,16 +386,18 @@ shared memory there.
 **What we did:** `start.sh` remounts `/dev/shm` at 50% of RAM at boot, after
 which four windows open without a crash.
 
-## Boat external hosts (local trial)
+## External hosts on replaceable VMs
 
 Boat preserves the logical box and filesystem across stop/resume but replaces
-/etc/machine-id. Using that ID for the external Superset host leaves existing
-terminal tabs targeting an offline host. This trial derives only getHostId()
-from the box's BOAT_ID in /run/ascii-secrets/env.sh. The runtime file is used
-instead of inherited environment or a saved identity so CLI and systemd agree,
-and a newly forked box receives its own identity. Linux machine identity and
-getMachineId() encryption behavior are unchanged. Other platforms retain the
-upstream host-ID calculation. A missing runtime file means this is not Boat;
-a present but unreadable or invalid runtime file fails rather than silently
-registering another host. This does not preserve running processes or establish
-that the UI restores agent conversations after a cold boot.
+`/etc/machine-id`. OS-derived Superset IDs leave existing tabs addressing an
+offline host. A shared identity resolver now accepts an explicit provisioning
+identity, then checks provider adapters, then retains the existing OS-derived
+identity outside supported providers. The first adapter is Boat; other VM
+providers can supply `SUPERSET_HOST_IDENTITY` without adding detection code.
+
+The Boat adapter reads its runtime file rather than inherited BOAT_ID values or
+a saved disk identity, so a cloned box receives a different identity. A recognized
+but unreadable or invalid runtime fails instead of silently registering another
+host. Host hashing and the raw `getMachineId()` encryption helper are unchanged.
+This stabilizes routing; it does not preserve processes or guarantee every agent
+can resume. The CLI and host service must receive the same explicit configuration.

@@ -92,3 +92,12 @@ or the value arrives empty.
 ## Launcher-owned runtime values
 
 `SUPERSET_HOST_INSTALL_SOURCE` is set by the desktop coordinator (`desktop`) or standalone CLI spawner (`cli`) on the host child process. A checkout may set `dev`; absent/unrecognized values report `unknown`. This is install provenance, not an API deployment setting: do not put it in shared `.env` templates or deployment secrets. The host ignores login-shell values for this key. In-place updates additionally require a standalone entrypoint and a valid install layout.
+
+`SUPERSET_HOST_IDENTITY` is an optional, launcher-owned persistent identity for
+external hosts. Set the same value for the CLI and host service. Use a scoped
+value such as `provider:account:instance`, stable across resume but different for
+a separate clone. It is not an authentication credential. It overrides provider
+detection; an empty or malformed value is an error. Without it, the Boat adapter
+reads the runtime box ID, and other machines retain their existing OS-derived
+identity. This is a machine provisioning option, not an API deployment variable;
+it does not belong in deployment secrets or application `.env` templates.
